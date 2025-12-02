@@ -97,6 +97,12 @@
     "tinybase": "^5.3.0",
     "viem": "^2.0.0",
     "wagmi": "^2.0.0",
+    "@reown/appkit": "^1.8.12",
+    "@reown/appkit-adapter-wagmi": "^1.8.12",
+    "@reown/walletkit": "^1.4.1",
+    "@tanstack/react-query": "^5.90.5",
+    "@walletconnect/core": "^2.23.0",
+    "@walletconnect/utils": "^2.23.0"
     "webbuf": "^3.0.28",
     "y-indexeddb": "^9.0.12",
     "y-webrtc": "^10.3.0",
