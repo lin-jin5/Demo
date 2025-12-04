@@ -2,9 +2,27 @@ import React, { useEffect, useState } from 'react';
 import { Agent, FireflyBlockchainEvent } from '../types/firefly';
 import { agentStore } from '../stores/AgentStore';
 
-// Use our local proxy to avoid mixed content issues
 const FIREFLY_API_URL = "/api/firefly";
-const LISTENER_ID = "3e002303-9289-4ef7-8701-f0f7cea11435"; // From your snippet
+const METADATA_PROXY_URL = "/api/metadata";
+
+async function fetchWithRetry(url: string, retries = 3, delay = 1000): Promise<any> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      return await response.json();
+    } catch (error) {
+      console.error(`Attempt ${i + 1} failed for ${url}. Retrying in ${delay}ms...`, error);
+      if (i < retries - 1) {
+        await new Promise(res => setTimeout(res, delay));
+      } else {
+        throw error;
+      }
+    }
+  }
+}
 
 export const AgentFetcher: React.FC = () => {
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -14,71 +32,88 @@ export const AgentFetcher: React.FC = () => {
 
   useEffect(() => {
     const fetchAllAgents = async () => {
+      const allRecords: Agent[] = [];
+      let skip = 0;
+      
       try {
         setLoading(true);
-        const allRecords: Agent[] = [];
-        let skip = 0;
         const limit = 50;
         let hasMore = true;
 
         while (hasMore) {
-          // 1. Build URL
           const params = new URLSearchParams({
-            listener: LISTENER_ID,
             limit: limit.toString(),
             skip: skip.toString(),
-            sort: 'timestamp', // Ensure consistent ordering
           });
 
           const response = await fetch(`${FIREFLY_API_URL}?${params}`);
-
           if (!response.ok) {
             throw new Error(`Firefly Error: ${response.statusText}`);
           }
-
           const data: FireflyBlockchainEvent[] = await response.json();
-
           if (data.length === 0) {
             hasMore = false;
             break;
           }
-
-          // 2. Map and Clean Data
-          const cleanedBatch = data.map((event) => {
-            const output = event.output;
-            return {
-              fireflyId: event.id,
-              agentId: output.agentId || '0',
-              // Handle various field names for wallet
-              wallet: output.owner || output.agentWallet || output.to || 'Unknown',
-              // Handle various field names for metadata
-              metadataUri: output.tokenURI || output.metadata || '',
-              timestamp: event.info.timestamp,
-            };
-          });
-
+          const cleanedBatch = data.map((event) => ({
+            fireflyId: event.id,
+            agentId: event.blockchainEvent.output.agentId || '0',
+            wallet: event.blockchainEvent.output.owner || 'Unknown',
+            metadataUri: event.blockchainEvent.output.tokenURI || '',
+            timestamp: event.blockchainEvent.info.timestamp,
+          }));
           allRecords.push(...cleanedBatch);
-          
-          // Update progress for UI
           setProgress(allRecords.length);
-          
-          // Prepare next page
-          skip += limit;
+          skip += data.length;
+          if (data.length < limit) {
+            hasMore = false;
+          }
         }
-
         console.log(`✅ Finished. Total Agents: ${allRecords.length}`);
-        setAgents(allRecords);
-        agentStore.addAgents(allRecords); // Add agents to the store
       } catch (err: any) {
         console.error("Fetch failed", err);
         setError(err.message);
       } finally {
+        setAgents(allRecords);
+        await agentStore.setAgents(allRecords);
         setLoading(false);
       }
     };
 
     fetchAllAgents();
   }, []);
+
+  useEffect(() => {
+    const fetchAgentMetadata = async () => {
+      const agentsToUpdate = agents.filter(agent => agent.metadataUri && !agent.metadata);
+      for (const agent of agentsToUpdate) {
+        try {
+          let metadata;
+          if (agent.metadataUri.startsWith('data:application/json;base64,')) {
+            try {
+              const base64String = agent.metadataUri.split(',')[1];
+              metadata = JSON.parse(atob(base64String));
+            } catch (error) {
+              console.error(`Failed to decode base64 metadata for agent ${agent.agentId}:`, error);
+              continue;
+            }
+          } else if (agent.metadataUri.startsWith('http')) {
+            const proxyUrl = `${METADATA_PROXY_URL}?url=${encodeURIComponent(agent.metadataUri)}`;
+            metadata = await fetchWithRetry(proxyUrl);
+          }
+          if (metadata) {
+            agentStore.addAgent({ ...agent, metadata: JSON.stringify(metadata) });
+          }
+        } catch (error) {
+          console.error(`Failed to fetch metadata for agent ${agent.agentId}:`, error);
+        }
+      }
+    };
+
+    if (agents.length > 0) {
+      fetchAgentMetadata();
+    }
+  }, [agents]);
 
   if (loading) {
     return (
@@ -105,6 +140,11 @@ export const AgentFetcher: React.FC = () => {
             <div className="text-xs text-gray-500 truncate" title={agent.metadataUri}>
               URI: {agent.metadataUri}
             </div>
+            {agent.metadata && (
+              <div className="text-xs text-gray-600 mt-2">
+                <pre>{JSON.stringify(JSON.parse(agent.metadata), null, 2)}</pre>
+              </div>
+            )}
             <div className="text-xs text-gray-400 mt-2">
               Registered: {new Date(agent.timestamp).toLocaleString()}
             </div>

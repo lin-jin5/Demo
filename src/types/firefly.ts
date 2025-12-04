@@ -9,11 +9,19 @@ export interface FireflyEventOutput {
 
 export interface FireflyBlockchainEvent {
   id: string;
-  output: FireflyEventOutput;
-  info: {
-    transactionHash: string;
-    blockNumber: string;
-    timestamp: string;
+  sequence: number;  // Add this for pagination
+  type?: string;
+  namespace?: string;
+  reference?: string;
+  topic?: string;
+  created?: string;
+  blockchainEvent: {
+    output: FireflyEventOutput;
+    info: {
+      transactionHash: string;
+      blockNumber: string;
+      timestamp: string;
+    };
   };
 }
 
@@ -24,4 +32,5 @@ export interface Agent {
   wallet: string;
   metadataUri: string;
   timestamp: string;
+  metadata?: string;
 }
